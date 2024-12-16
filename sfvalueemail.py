@@ -56,19 +56,17 @@ def main():
     # Read the CSV data
     df = pd.read_csv('data.csv')
 
-    # Columns that we consider for medians
+    # Columns that we consider for medians (EXCLUDING total_employees and total_membership_claimed)
     value_columns = [
         'total_checkins',
         'total_unique_checkins',
         'months_since_first_checkin',
-        'total_membership_claimed',
         'total_payment_value',
         'total_transactions',
         'avg_fly_balance_per_employee',
         'median_fly_balance_per_employee',
         'pct_employees_with_vaulted_cards',
         'pct_employees_with_fly_spent',
-        'total_employees',
         'repeat_checkins_last_3_months'
     ]
 
@@ -77,15 +75,13 @@ def main():
         'total_checkins': 'Number of Visits',
         'total_unique_checkins': 'Number of Unique Guests',
         'months_since_first_checkin': 'Months Since First Guest Visit',
-        'total_membership_claimed': 'Memberships Claimed',
-        'total_payment_value': 'Total Payment Value ($)',
-        'total_transactions': 'Number of Transactions',
-        'avg_fly_balance_per_employee': 'Average Loyalty Points per Employee',
-        'median_fly_balance_per_employee': 'Median Loyalty Points per Employee',
+        'total_payment_value': 'Total Payment Value in $FLY (converted to $USD)',
+        'total_transactions': 'Number of $FLY Transactions',
+        'avg_fly_balance_per_employee': 'Average Loyalty Points ($FLY) per Employee (converted to $USD)',
+        'median_fly_balance_per_employee': 'Median Loyalty Points ($FLY) per Employee (converted to $USD)',
         'pct_employees_with_vaulted_cards': 'Percentage of Employees with Vaulted Payment Methods',
         'pct_employees_with_fly_spent': 'Percentage of Employees Using Loyalty Points',
-        'total_employees': 'Total Employees',
-        'repeat_checkins_last_3_months': 'Repeat Visits in the Last 3 Months'
+        'repeat_checkins_last_3_months': 'Repeat Visits since Launch'
     }
 
     # Convert columns to numeric if needed
@@ -93,7 +89,49 @@ def main():
         df[col] = df[col].astype(str).str.replace(r'[\$,]', '', regex=True)
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
-    # Compute medians
+    # Convert monetary columns from $FLY to USD by dividing by 10^20
+    if 'total_payment_value' in df.columns:
+        df['total_payment_value'] = df['total_payment_value'] / (10**20)
+
+    if 'avg_fly_balance_per_employee' in df.columns:
+        df['avg_fly_balance_per_employee'] = df['avg_fly_balance_per_employee'] / (10**20)
+
+    if 'median_fly_balance_per_employee' in df.columns:
+        df['median_fly_balance_per_employee'] = df['median_fly_balance_per_employee'] / (10**20)
+
+    # These percentage columns are already percentages, so no multiplication.
+    percentage_columns = ['pct_employees_with_vaulted_cards', 'pct_employees_with_fly_spent']
+
+    # Determine whether to use avg or median loyalty points by comparing global medians
+    medians = df[value_columns].median(numeric_only=True)
+
+    avg_median = medians.get('avg_fly_balance_per_employee', float('nan'))
+    median_median = medians.get('median_fly_balance_per_employee', float('nan'))
+
+    # Only keep the greater one of avg or median loyalty points
+    if pd.notnull(avg_median) and pd.notnull(median_median):
+        if avg_median >= median_median:
+            if 'median_fly_balance_per_employee' in value_columns:
+                value_columns.remove('median_fly_balance_per_employee')
+        else:
+            if 'avg_fly_balance_per_employee' in value_columns:
+                value_columns.remove('avg_fly_balance_per_employee')
+    else:
+        # Handle NaN cases
+        if pd.isnull(avg_median) and pd.notnull(median_median):
+            if 'avg_fly_balance_per_employee' in value_columns:
+                value_columns.remove('avg_fly_balance_per_employee')
+        elif pd.isnull(median_median) and pd.notnull(avg_median):
+            if 'median_fly_balance_per_employee' in value_columns:
+                value_columns.remove('median_fly_balance_per_employee')
+        else:
+            # Both NaN
+            if 'avg_fly_balance_per_employee' in value_columns:
+                value_columns.remove('avg_fly_balance_per_employee')
+            if 'median_fly_balance_per_employee' in value_columns:
+                value_columns.remove('median_fly_balance_per_employee')
+
+    # Recompute medians after removing one loyalty column if needed
     medians = df[value_columns].median(numeric_only=True)
 
     # Authenticate Gmail API
@@ -110,25 +148,35 @@ def main():
         if pd.isnull(restaurant_name) or restaurant_name.strip() == '':
             restaurant_name = 'Restaurant Team'
 
-        # Determine which columns meet/exceed the median
         highlight_values = {}
         for col in value_columns:
             val = row[col]
-            if (pd.notnull(val) and 
-                col in medians.index and 
-                pd.notnull(medians[col]) and 
-                val >= medians[col]):
-                # Format nicely: if it's a float but an integer value, convert to int
-                if isinstance(val, float) and val.is_integer():
-                    val = int(val)
+            if (
+                pd.notnull(val) and
+                col in medians.index and
+                pd.notnull(medians[col]) and
+                val >= medians[col]
+            ):
+                # Special condition: if pct_employees_with_fly_spent is 0%, exclude it
+                if col == 'pct_employees_with_fly_spent' and val == 0:
+                    # Skip adding this metric
+                    continue
+
+                # Format nicely
+                if col in percentage_columns and pd.notnull(val):
+                    # Format as XX.XX%
+                    val = f"{val:.2f}%"
+                else:
+                    # For numeric columns, if float is integer-like, convert to int
+                    if isinstance(val, float) and val.is_integer():
+                        val = int(val)
+
                 highlight_values[col] = val
 
-        # If fewer than 2 metrics meet/exceed the median, we won't show any stats.
-        # This includes the case of 0 or exactly 1 stat.
+        # If fewer than 2 metrics meet/exceed the median, we won't show any stats
         show_stats = len(highlight_values) >= 2
 
-        # Build personalized email body
-        # General message always included
+        # Build the email body
         email_body = f"""
         <html>
         <body>
@@ -143,7 +191,6 @@ def main():
             wait to show you what's in store.</p>
         """
 
-        # Include metrics only if show_stats is True
         if show_stats:
             email_body += """
             <p>We also wanted to highlight some of the areas where you've excelled:</p>
@@ -155,8 +202,7 @@ def main():
                 nice_name = column_mapping.get(col, col)
                 email_body += f"<tr><td>{nice_name}</td><td>{val}</td></tr>"
             email_body += "</table>"
-        
-        # Conclude the email
+
         email_body += f"""
             <p>Thank you once again for your continued support. 
             Wishing you wonderful holidays and an even brighter 2025!</p>
@@ -168,10 +214,8 @@ def main():
         """
 
         subject = f"Year-End Greetings from Blackbird: Looking Forward to 2025"
-        
-        # Placeholder for the client recipient if needed
-        # If you have a column in your CSV for the client's email, use row['email'].
-        # Otherwise, just leave a placeholder or remove if not required.
+
+        # Placeholder client email since it's not specified
         client_email = restaurant_name.replace(' ', '').lower() + "@example.com"
 
         client_message = create_message(sender_email, client_email, subject, email_body)
@@ -189,7 +233,6 @@ def main():
         filename = f"{restaurant_name.replace(' ', '_')}_email.eml"
         part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
 
-        # Add to the list of all attachments
         all_attachments.append(part)
 
     # After processing all restaurants, send one email with all attachments
@@ -197,9 +240,11 @@ def main():
         subject = "All Personalized Restaurant Emails"
         body = """Hi Maddie,
 
-Please find attached all the personalized email drafts for each of our SF launch partners. 
-These emails already reflect holiday well-wishes and enthusiasm for 2025, 
-and some include their key metrics (only if they met or exceeded the median in two or more areas).
+Please find attached all the personalized email drafts for each of our SF launch partners.
+These emails include holiday well-wishes, enthusiasm for 2025, and metrics only if they 
+met or exceeded the median in two or more areas. Also note that only the higher loyalty points 
+metric (average or median) is included, monetary values have been converted from $FLY to $USD,
+and if the percentage of employees using loyalty points is 0%, we've excluded that metric.
 
 Happy Holidays,
 The Blackbird Team
