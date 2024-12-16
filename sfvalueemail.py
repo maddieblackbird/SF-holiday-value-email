@@ -177,7 +177,8 @@ def main():
 
                 # Formatting
                 if col in percentage_columns and pd.notnull(val):
-                    val = f"{val:.2f}%"
+                    # Format as XX%
+                    val = f"{int(round(val))}%"
                 else:
                     if isinstance(val, float) and val.is_integer():
                         val = int(val)
