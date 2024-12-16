@@ -72,9 +72,8 @@ def main():
 
     # Mapping columns to layman's terms
     column_mapping = {
-        'total_checkins': 'Number of Visits',
+        'total_checkins': 'Number of Blackbird Tap-ins',
         'total_unique_checkins': 'Number of Unique Guests',
-        'months_since_first_checkin': 'Months Since First Guest Visit',
         'total_payment_value': 'Total Payment Value in $FLY (converted to $USD)',
         'total_transactions': 'Number of $FLY Transactions',
         # Updated to emphasize $FLY instead of "Loyalty Points"
