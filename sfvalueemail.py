@@ -60,7 +60,6 @@ def main():
     value_columns = [
         'total_checkins',
         'total_unique_checkins',
-        'months_since_first_checkin',
         'total_payment_value',
         'total_transactions',
         'avg_fly_balance_per_employee',
