@@ -77,10 +77,13 @@ def main():
         'months_since_first_checkin': 'Months Since First Guest Visit',
         'total_payment_value': 'Total Payment Value in $FLY (converted to $USD)',
         'total_transactions': 'Number of $FLY Transactions',
-        'avg_fly_balance_per_employee': 'Average Loyalty Points ($FLY) per Employee (converted to $USD)',
-        'median_fly_balance_per_employee': 'Median Loyalty Points ($FLY) per Employee (converted to $USD)',
-        'pct_employees_with_vaulted_cards': 'Percentage of Employees with Vaulted Payment Methods',
-        'pct_employees_with_fly_spent': 'Percentage of Employees Using Loyalty Points',
+        # Updated to emphasize $FLY instead of "Loyalty Points"
+        'avg_fly_balance_per_employee': 'Average $FLY per Employee (converted to $USD)',
+        'median_fly_balance_per_employee': 'Median $FLY per Employee (converted to $USD)',
+        # Updated phrasing for vaulted cards
+        'pct_employees_with_vaulted_cards': 'Percent of employees who have added a card and are ready to use their $FLY for meals',
+        # Already referencing $FLY, just dropping "loyalty points"
+        'pct_employees_with_fly_spent': 'Percentage of Employees Using $FLY',
         'repeat_checkins_last_3_months': 'Repeat Visits since Launch'
     }
 
@@ -99,47 +102,59 @@ def main():
     if 'median_fly_balance_per_employee' in df.columns:
         df['median_fly_balance_per_employee'] = df['median_fly_balance_per_employee'] / (10**20)
 
-    # These percentage columns are already percentages, so no multiplication.
     percentage_columns = ['pct_employees_with_vaulted_cards', 'pct_employees_with_fly_spent']
 
-    # Determine whether to use avg or median loyalty points by comparing global medians
+    # Determine whether to use avg or median $FLY per employee by comparing global medians
     medians = df[value_columns].median(numeric_only=True)
-
     avg_median = medians.get('avg_fly_balance_per_employee', float('nan'))
     median_median = medians.get('median_fly_balance_per_employee', float('nan'))
 
-    # Only keep the greater one of avg or median loyalty points
+    chosen_fly_metric = None  # Will store the chosen metric's name
+    chosen_fly_label = None   # Will store the chosen metric's layman label
+
     if pd.notnull(avg_median) and pd.notnull(median_median):
         if avg_median >= median_median:
+            # Keep avg_fly_balance_per_employee, remove median_fly_balance_per_employee
             if 'median_fly_balance_per_employee' in value_columns:
                 value_columns.remove('median_fly_balance_per_employee')
+            chosen_fly_metric = 'avg_fly_balance_per_employee'
         else:
+            # Keep median_fly_balance_per_employee, remove avg_fly_balance_per_employee
             if 'avg_fly_balance_per_employee' in value_columns:
                 value_columns.remove('avg_fly_balance_per_employee')
+            chosen_fly_metric = 'median_fly_balance_per_employee'
     else:
         # Handle NaN cases
         if pd.isnull(avg_median) and pd.notnull(median_median):
+            # Only median is valid
             if 'avg_fly_balance_per_employee' in value_columns:
                 value_columns.remove('avg_fly_balance_per_employee')
+            chosen_fly_metric = 'median_fly_balance_per_employee'
         elif pd.isnull(median_median) and pd.notnull(avg_median):
+            # Only avg is valid
             if 'median_fly_balance_per_employee' in value_columns:
                 value_columns.remove('median_fly_balance_per_employee')
+            chosen_fly_metric = 'avg_fly_balance_per_employee'
         else:
-            # Both NaN
+            # Both NaN - remove both
             if 'avg_fly_balance_per_employee' in value_columns:
                 value_columns.remove('avg_fly_balance_per_employee')
             if 'median_fly_balance_per_employee' in value_columns:
                 value_columns.remove('median_fly_balance_per_employee')
+            chosen_fly_metric = None
 
-    # Recompute medians after removing one loyalty column if needed
+    # Recompute medians after possibly removing one loyalty metric
     medians = df[value_columns].median(numeric_only=True)
+
+    # If chosen_fly_metric is determined, get its layman label
+    if chosen_fly_metric:
+        chosen_fly_label = column_mapping[chosen_fly_metric]
 
     # Authenticate Gmail API
     service = get_authenticated_service()
     sender_email = 'maddie.weber@blackbird.xyz'
     recipient_email = 'maddie.weber@blackbird.xyz'  # Send all attachments to Maddie
 
-    # We'll store all attachments in this list
     all_attachments = []
 
     # Process each restaurant
@@ -159,24 +174,21 @@ def main():
             ):
                 # Special condition: if pct_employees_with_fly_spent is 0%, exclude it
                 if col == 'pct_employees_with_fly_spent' and val == 0:
-                    # Skip adding this metric
                     continue
 
-                # Format nicely
+                # Formatting
                 if col in percentage_columns and pd.notnull(val):
-                    # Format as XX.XX%
                     val = f"{val:.2f}%"
                 else:
-                    # For numeric columns, if float is integer-like, convert to int
                     if isinstance(val, float) and val.is_integer():
                         val = int(val)
 
                 highlight_values[col] = val
 
-        # If fewer than 2 metrics meet/exceed the median, we won't show any stats
+        # If fewer than 2 metrics meet/exceed the median, we won't show the highlight table
         show_stats = len(highlight_values) >= 2
 
-        # Build the email body
+        # Start building the email
         email_body = f"""
         <html>
         <body>
@@ -194,7 +206,6 @@ def main():
         if show_stats:
             email_body += """
             <p>We also wanted to highlight some of the areas where you've excelled:</p>
-
             <table border="1" cellspacing="0" cellpadding="5" style="border-collapse: collapse;">
                 <tr><th>Metric</th><th>Value</th></tr>
             """
@@ -202,6 +213,16 @@ def main():
                 nice_name = column_mapping.get(col, col)
                 email_body += f"<tr><td>{nice_name}</td><td>{val}</td></tr>"
             email_body += "</table>"
+
+        # Always show the chosen $FLY metric if it exists
+        if chosen_fly_metric is not None:
+            chosen_val = row[chosen_fly_metric]
+            # Format chosen_val similarly
+            if isinstance(chosen_val, float) and chosen_val.is_integer():
+                chosen_val = int(chosen_val)
+            email_body += f"""
+            <p>Additionally, your employees currently hold a {chosen_fly_label}: <strong>{chosen_val}</strong></p>
+            """
 
         email_body += f"""
             <p>Thank you once again for your continued support. 
@@ -214,10 +235,7 @@ def main():
         """
 
         subject = f"Year-End Greetings from Blackbird: Looking Forward to 2025"
-
-        # Placeholder client email since it's not specified
         client_email = restaurant_name.replace(' ', '').lower() + "@example.com"
-
         client_message = create_message(sender_email, client_email, subject, email_body)
 
         # Convert client_message to .eml
@@ -235,16 +253,16 @@ def main():
 
         all_attachments.append(part)
 
-    # After processing all restaurants, send one email with all attachments
+    # Send one email to Maddie with all attachments
     if all_attachments:
         subject = "All Personalized Restaurant Emails"
         body = """Hi Maddie,
 
 Please find attached all the personalized email drafts for each of our SF launch partners.
-These emails include holiday well-wishes, enthusiasm for 2025, and metrics only if they 
-met or exceeded the median in two or more areas. Also note that only the higher loyalty points 
-metric (average or median) is included, monetary values have been converted from $FLY to $USD,
-and if the percentage of employees using loyalty points is 0%, we've excluded that metric.
+These emails include holiday well-wishes, enthusiasm for 2025, and highlight metrics that meet or exceed the median. 
+We've updated the wording for vaulted cards and replaced "loyalty points" with "$FLY".
+Also, we are always showing the chosen $FLY metric (average or median) that employees have accumulated, 
+regardless of whether it meets the median threshold or not.
 
 Happy Holidays,
 The Blackbird Team
@@ -254,7 +272,6 @@ The Blackbird Team
         message['From'] = sender_email
         message['Subject'] = subject
         message.attach(MIMEText(body, 'plain'))
-
         for attachment in all_attachments:
             message.attach(attachment)
 
