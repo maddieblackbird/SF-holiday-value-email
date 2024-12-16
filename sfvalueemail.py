@@ -191,7 +191,7 @@ def main():
         email_body = f"""
         <html>
         <body>
-            <p>Hi {restaurant_name},</p>
+            <p>Hi {restaurant_name} [INSERT ACTUAL POC NAME HERE],</p>
             <p>As the holiday season sets in, we want to express our heartfelt gratitude 
             for your partnership over these past few months. Working together has been an incredible 
             journey, and we truly value the trust you've placed in us.</p>
@@ -224,11 +224,16 @@ def main():
             """
 
         email_body += f"""
-            <p>Thank you once again for your continued support. 
-            Wishing you wonderful holidays and an even brighter 2025!</p>
+        <p>Thank you once again for your continued support. 
+        Wishing you wonderful holidays and an even brighter 2025!</p>
+        
+        <p><b>As always, please reach out if you are interested in running an activation through Blackbird 
+        (e.g., Blackbird comps one menu item or drink for a set period of time for everyone that taps in 
+        and pays through our app). Alternatively, please let us know if a staff retraining of our product 
+        would be helpful, and we can get something on the calendar.</b></p>
 
-            <p>Warmly,<br>
-            The Blackbird Team</p>
+        <p>Warmly,<br>
+        The Blackbird Team</p>
         </body>
         </html>
         """
